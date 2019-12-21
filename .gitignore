@@ -1,0 +1,13 @@
+/*.egg-info/
+.tox/
+.vscode/
+__pycache__
+.venv
+htmlcov/
+.coverage
+.mypy_cache/
+build/
+dist/
+*.pyc
+*.mp4
+*.ogv

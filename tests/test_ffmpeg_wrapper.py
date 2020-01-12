@@ -56,6 +56,7 @@ def test_stop():
         stop.start()
         list(wrapper.process(to=output_file))
         assert wrapper.returncode == 255
+        assert not output_file.exists()
 
 
 def test_invalid_video():

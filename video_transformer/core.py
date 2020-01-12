@@ -11,6 +11,7 @@ from enum import Enum, unique
 from logging import getLogger
 from pathlib import Path
 from select import select
+from tempfile import TemporaryDirectory
 from typing import (Any, Callable, ClassVar, Dict, Iterable, Optional, Pattern,
                     Sequence, Tuple)
 
@@ -150,44 +151,48 @@ class FFmpegWrapper:
 
     def process(self, to: Path, by: float = 2.0, fmt: Format = Format.MP4) -> Iterable[Progress]:
         """Runs ffmpeg (blocking). Yields `Progress` instances when logs are received."""
-        args: Tuple = (
-            "ffmpeg",  # TODO
-            *ffmpeg
-            .input(str(self.input_file))
-            .setpts(f"{1/by}*PTS")
-            .output(str(to), vcodec=fmt.value, preset="slower", crf=17)
-            .get_args(overwrite_output=True)
-        )
         try:
             # Clear previous returncode
             self.returncode = None
-            # Start the ffmpeg process
-            self.ffmpeg = subprocess.Popen(
-                args,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                universal_newlines=True
-            )
-            # Unbuffer stderr so we get output lines faster
-            unbuffer_fd(self.ffmpeg.stderr.fileno())
-            # Wait for logs on stderr or stdout
-            while True:
-                rlist, _, _ = select((self.ffmpeg.stderr, self.ffmpeg.stdout), (), ())
-                # Read logs from stdin
-                if self.ffmpeg.stderr in rlist:
-                    status = self.process_logs(self.ffmpeg.stderr.read().splitlines())
-                    if status:
-                        yield status
+            with TemporaryDirectory("video-transformer") as td:
+                temp_to = Path(td) / to.name
+                args: Tuple = (
+                    FFMPEG,
+                    *ffmpeg
+                    .input(str(self.input_file))
+                    .setpts(f"{1/by}*PTS")
+                    .output(str(temp_to), vcodec=fmt.value, preset="slower", crf=17)
+                    .get_args(overwrite_output=True)
+                )
+                # Start the ffmpeg process
+                self.ffmpeg = subprocess.Popen(
+                    args,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    universal_newlines=True
+                )
+                # Unbuffer stderr so we get output lines faster
+                unbuffer_fd(self.ffmpeg.stderr.fileno())
+                yield from self._ffmpeg_loop(self.ffmpeg)
+                self.returncode = self.ffmpeg.poll()
+                if self.returncode == 0:
+                    # if ffmpeg exited successfully, copy the output file
+                    temp_to.rename(to)
 
-                # ignore stdout
-                if self.ffmpeg.stdout in rlist:
-                    self.ffmpeg.stdout.read()
-
-                # Check if the process has ended
-                returncode = self.ffmpeg.poll()
-                if returncode is not None:
-                    self.returncode = returncode
-                    break
         finally:
             # The process is not running anymore
             self.ffmpeg = None
+
+    @classmethod
+    def _ffmpeg_loop(cls, ffmpeg: subprocess.Popen) -> Iterable[Progress]:
+        """Waits for the given ffmpeg process to exit"""
+        while ffmpeg.poll() is None:
+            rlist, _, _ = select((ffmpeg.stderr, ffmpeg.stdout), (), ())
+            # Read logs from stdin
+            if ffmpeg.stderr in rlist:
+                status = cls.process_logs(ffmpeg.stderr.read().splitlines())
+                if status:
+                    yield status
+            # ignore stdout
+            if ffmpeg.stdout in rlist:
+                ffmpeg.stdout.read()

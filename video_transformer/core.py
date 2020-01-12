@@ -41,7 +41,7 @@ def parse_speed(as_str: str) -> float:
     return float(as_str.rstrip("x"))
 
 
-def unbuffer_fd(fileno: int) -> None:
+def unbuffer_fd(fileno: int):
     """Makes the fd with the given number unbuffered"""
     fcntl.fcntl(fileno, fcntl.F_SETFL, fcntl.fcntl(fileno, fcntl.F_GETFL) | os.O_NONBLOCK)
 
@@ -52,7 +52,7 @@ class Progress:
     size: str
     time: datetime.timedelta
     bitrate: str
-    speed: float
+    speed: Optional[float] = None  # Not always available
 
     #: Which function to use to parse which field in from_raw_dict()
     _PARSERS: ClassVar[Dict[str, Callable[[str], Any]]] = {

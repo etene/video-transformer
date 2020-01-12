@@ -115,15 +115,18 @@ class FFmpegWrapper:
         """Runs ffpmpeg (blocking) to get the video's metadata"""
         if not FFMPEG:
             raise RuntimeError("ffmpeg not found in $PATH")
-        raw = subprocess.check_output((
-            FFMPEG,
-            "-i", str(self.input_file),
-            "-map", "0:v:0",
-            "-c", "copy",
-            "-f", "null", "-"),
-            stderr=subprocess.STDOUT,
-            universal_newlines=True,
-        )
+        try:
+            raw = subprocess.check_output((
+                FFMPEG,
+                "-i", str(self.input_file),
+                "-map", "0:v:0",
+                "-c", "copy",
+                "-f", "null", "-"),
+                stderr=subprocess.STDOUT,
+                universal_newlines=True,
+            )
+        except subprocess.CalledProcessError as cpe:
+            raise RuntimeError(cpe.stdout.splitlines()[-1])
         # The metadata is in the last few lines
         metadata = dict(PROGRESS_RE.findall(raw.splitlines()[-2]))
         resolution_match = RESOLUTION_RE.search(raw)

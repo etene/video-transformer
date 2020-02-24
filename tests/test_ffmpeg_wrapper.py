@@ -3,7 +3,7 @@ from tempfile import TemporaryDirectory
 
 import pytest
 
-from video_transformer.core import FFmpegWrapper
+from video_transformer.core import FFmpegWrapper, VideoError
 
 SAMPLE_VIDEO = Path("tests/Whathappenedontwentythirdstreet-thomasedisoninc.ogv.240p.vp9.webm")
 
@@ -11,9 +11,11 @@ SAMPLE_VIDEO = Path("tests/Whathappenedontwentythirdstreet-thomasedisoninc.ogv.2
 def test_metadata():
     """metadata inferred from a sample video is correct"""
     wrapper = FFmpegWrapper(SAMPLE_VIDEO)
-    assert wrapper.metadata.frames > 0  # cannot check exactly, don't know why
-    assert wrapper.metadata.duration.total_seconds() == 49
-    assert wrapper.metadata.resolution == (320, 240)
+    md = wrapper.metadata
+    assert md.codec == "vp9"
+    assert md.pixel_format == "yuv420p"
+    assert md.duration.total_seconds() == 49.713
+    assert md.resolution == (320, 240)
 
 
 def test_process():
@@ -55,6 +57,6 @@ def test_stop():
 
 
 def test_invalid_video():
-    with pytest.raises(RuntimeError) as err:
+    with pytest.raises(VideoError) as err:
         FFmpegWrapper(Path(__file__))
     assert str(err.value).endswith("Invalid data found when processing input")

@@ -12,8 +12,8 @@ from logging import getLogger
 from pathlib import Path
 from select import select
 from tempfile import TemporaryDirectory
-from typing import (Any, Callable, ClassVar, Dict, Iterable, Optional, Pattern,
-                    Sequence, Tuple)
+from typing import (Any, Callable, ClassVar, Dict, Iterable, List, Optional,
+                    Pattern, Sequence, Tuple)
 
 import ffmpeg  # type: ignore
 
@@ -23,8 +23,6 @@ FFMPEG: Optional[str] = find_executable("ffmpeg")
 
 #: Regex used to parse progress lines with multiple key=value pairs
 PROGRESS_RE: Pattern = re.compile(r"(\w+)=\s*([^ ]+) ?")
-
-RESOLUTION_RE: Pattern = re.compile(r"Stream #\d+:\d+: Video: .* (?P<x>\d+)x(?P<y>\d+)")
 
 
 def parse_timestamp(as_str: str) -> datetime.timedelta:
@@ -44,6 +42,10 @@ def parse_speed(as_str: str) -> float:
 def unbuffer_fd(fileno: int):
     """Makes the fd with the given number unbuffered"""
     fcntl.fcntl(fileno, fcntl.F_SETFL, fcntl.fcntl(fileno, fcntl.F_GETFL) | os.O_NONBLOCK)
+
+
+class VideoError(Exception):
+    """Raised when a video cannot be processed"""
 
 
 @dataclass
@@ -73,8 +75,10 @@ class Progress:
 @dataclass
 class VideoMetadata:
     """Metadata parsed by analyzing the video with ffmpeg"""
-    #: Number of frames in the video
-    frames: int
+    #: Video codec
+    codec: str
+    #: pixel format
+    pixel_format: str
     #: Video duration
     duration: datetime.timedelta
     #: Resolution
@@ -114,30 +118,23 @@ class FFmpegWrapper:
 
     def fetch_video_metadata(self) -> VideoMetadata:
         """Runs ffpmpeg (blocking) to get the video's metadata"""
-        if not FFMPEG:
-            raise RuntimeError("ffmpeg not found in $PATH")
         try:
-            raw = subprocess.check_output((
-                FFMPEG,
-                "-i", str(self.input_file),
-                "-map", "0:v:0",
-                "-c", "copy",
-                "-f", "null", "-"),
-                stderr=subprocess.STDOUT,
-                universal_newlines=True,
-            )
-        except subprocess.CalledProcessError as cpe:
-            raise RuntimeError(cpe.stdout.splitlines()[-1])
-        # The metadata is in the last few lines
-        metadata = dict(PROGRESS_RE.findall(raw.splitlines()[-2]))
-        resolution_match = RESOLUTION_RE.search(raw)
-        resolution = tuple(map(int, resolution_match.groups())) if resolution_match else None
-        if not metadata:
-            raise RuntimeError(f"ffmpeg did not return metadata for {self.input_file}")
+            probe: dict = ffmpeg.probe(str(self.input_file))
+        except ffmpeg.Error as err:
+            raise VideoError(err.stderr.splitlines()[-1].decode())
+        video_streams: List[Dict[str, str]] = list(
+            filter(lambda y: y.get("codec_type") == "video", probe["streams"])
+        )
+        if not video_streams:
+            raise VideoError("No video streams found in {self.input_file}")
+        if len(video_streams) > 1:
+            LOGGER.warning("More than one video stream in %s, using the first one", self.input_file)
+        video_stream: Dict[str, str] = video_streams[0]
         return VideoMetadata(
-            frames=int(metadata["frame"]),
-            duration=parse_timestamp(metadata["time"]),
-            resolution=resolution,  # type: ignore
+            codec=video_stream["codec_name"],
+            pixel_format=video_stream["pix_fmt"],
+            duration=datetime.timedelta(seconds=float(probe["format"]["duration"])),
+            resolution=(int(video_stream['width']), int(video_stream['height'])),
         )
 
     def stop(self):
